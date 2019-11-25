@@ -1,7 +1,9 @@
 /// This module handles the deserialization of the humble bundle monthly trove metadata feed.
 /// It provides operations that deal with the contents of the feed itself.
 use crate::cache::Cache;
-use failure::{err_msg, Error};
+use chrono::{NaiveDateTime, Utc};
+use failure::Error;
+use log::{debug, info, warn};
 use select::{document::Document, predicate::Attr};
 use serde::Deserialize;
 use serde_json::Value;
@@ -138,9 +140,17 @@ pub struct TroveFeed {
     feed: Feed,
 }
 
+fn chunk_url(i: usize) -> String {
+    format!(
+        "https://www.humblebundle.com/api/v1/trove/chunk?index={}",
+        i
+    )
+}
+
 impl TroveFeed {
     fn retrieve(cache: &Cache) -> Result<Value, Error> {
-        let text = cache.retrieve("https://www.humblebundle.com/monthly/trove")?;
+        const TROVE_URL: &str = "https://www.humblebundle.com/monthly/trove";
+        let text = cache.retrieve(&TROVE_URL)?;
         let doc = Document::from(str::from_utf8(&text)?);
         let data = doc
             .find(Attr("id", "webpack-monthly-trove-data"))
@@ -148,6 +158,31 @@ impl TroveFeed {
             .unwrap()
             .text();
         let mut root: Value = serde_json::from_str(data.as_str())?;
+        debug!("Extracting number of chunks");
+        let chunks: usize = match &root["chunks"] {
+            Value::Number(number) => {
+                number.as_u64().expect("Unable to convert chunks to u64") as usize
+            }
+            _ => panic!("Unable to get chunks value!"),
+        };
+        let expiration = match &root["countdownTimerOptions"]["nextAdditionTime"] {
+            Value::String(string) => {
+                NaiveDateTime::parse_from_str(string.as_str(), "%Y-%m-%dT%H:%M:%S%.f")
+                    .expect("Error parsing nextAdditionTime")
+            }
+            _ => panic!("Unable to get nextAdditionTime!"),
+        };
+        debug!("Expiration: {}", expiration);
+        if Utc::now().timestamp() > expiration.timestamp() {
+            println!("Resetting cache.");
+            info!("Resetting cache.");
+            cache.invalidate(TROVE_URL)?;
+            for i in 0..chunks {
+                cache.invalidate(chunk_url(i).as_str())?;
+            }
+            return TroveFeed::retrieve(cache);
+        }
+        debug!("Getting product list");
         let products = match root
             .get_mut("standardProducts")
             .expect("Unable to get product list")
@@ -155,14 +190,8 @@ impl TroveFeed {
             Value::Array(array) => array,
             _ => panic!("Unexpected value in standard_products field"),
         };
-        for i in 0..5 {
-            let bytes = cache.retrieve(
-                format!(
-                    "https://www.humblebundle.com/api/v1/trove/chunk?index={}",
-                    i
-                )
-                .as_str(),
-            )?;
+        for i in 0..chunks {
+            let bytes = cache.retrieve(chunk_url(i).as_str())?;
             let chunk: Vec<Value> = serde_json::from_str(str::from_utf8(&bytes)?)?;
             products.extend(chunk);
         }
@@ -192,9 +221,33 @@ impl TroveFeed {
     pub fn cache_images(&self) {
         self.feed.images().iter().for_each(|image| {
             if let Err(err) = self.cache.retrieve(image) {
-                println!("Warning: {}", err);
+                warn!("{}", err);
             }
         });
+        self.cache_screenshots();
+        self.cache_thumbnails();
+    }
+
+    pub fn cache_thumbnails(&self) {
+        (&self.feed.standard_products)
+            .iter()
+            .flat_map(|p| &p.carousel_content.thumbnail)
+            .for_each(|url| {
+                if let Err(err) = self.cache.retrieve(url.as_str()) {
+                    warn!("{}", err);
+                }
+            });
+    }
+
+    pub fn cache_screenshots(&self) {
+        (&self.feed.standard_products)
+            .iter()
+            .flat_map(|p| &p.carousel_content.screenshot)
+            .for_each(|url| {
+                if let Err(err) = self.cache.retrieve(url.as_str()) {
+                    warn!("{}", err);
+                }
+            });
     }
 
     pub fn load(cache: Cache, path: &PathBuf) -> Result<TroveFeed, Error> {

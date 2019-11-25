@@ -1,3 +1,4 @@
+extern crate log;
 /// This module provides a local cache of web URLs. It is intended to be the equivalent of
 /// a browser's cache. It currently doesn't expire any entries in the cache.
 ///
@@ -7,13 +8,12 @@
 /// - Provide a means to return old cached copies of entries
 /// - Use this capability to backup old copies of the humble bundle monthly feed
 extern crate sha2;
-extern crate log;
 
-use std::path::PathBuf;
+use log::{debug, error, trace};
 use sha2::Digest;
 use std::fs;
-use std::io::{Read, Error};
-use log::{debug, error};
+use std::io::{Error, Read};
+use std::path::PathBuf;
 
 fn sha256(url: &str) -> String {
     let mut hasher = sha2::Sha256::new();
@@ -40,7 +40,7 @@ impl Cache {
     pub fn retrieve(&self, url: &str) -> Result<Vec<u8>, Error> {
         let hash = sha256(url);
         let cached = self.root.join(&hash);
-        debug!("{:?}", hash);
+        trace!("{:?}", hash);
         if !cached.exists() {
             // TODO: Add cache expiration
             debug!("caching: {}", url);
@@ -54,18 +54,17 @@ impl Cache {
         Ok(fs::read(cached)?)
     }
 
-    pub fn get_versions(&self, _url: &str) -> Vec<String> {
-        Vec::<String>::new()
-    }
-
-    pub fn retrieve_version(&self, _index: u32) {}
-
-    pub fn force_retrieve(&self, url: &str) -> Result<Vec<u8>, Error> {
+    pub fn invalidate(&self, url: &str) -> Result<(), Error> {
         let hash = sha256(url);
         let cached = self.root.join(&hash);
         if cached.exists() {
             fs::remove_file(cached)?;
         }
+        Ok(())
+    }
+
+    pub fn force_retrieve(&self, url: &str) -> Result<Vec<u8>, Error> {
+        self.invalidate(url)?;
         self.retrieve(url)
     }
 }

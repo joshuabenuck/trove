@@ -26,6 +26,7 @@ extern crate trove;
 
 use clap::{App, Arg};
 use dirs;
+use env_logger;
 use failure::Error;
 use std::fs;
 use std::path::PathBuf;
@@ -33,6 +34,7 @@ use std::process::exit;
 use trove::{cache::Cache, trove_feed::TroveFeed};
 
 fn run() -> Result<(), Error> {
+    env_logger::init();
     let matches = App::new("trove")
         .about("A utility to manage Humble Bundle Trove titles")
         .arg(
@@ -83,6 +85,9 @@ fn run() -> Result<(), Error> {
         feed.products()
             .iter()
             .for_each(|p| println!("{}", p.machine_name));
+    }
+    if matches.is_present("cache-images") {
+        feed.cache_images();
     }
     if let Some(to_diff) = matches.value_of("diff") {
         let cache = Cache::new(cache_dir);
