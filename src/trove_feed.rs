@@ -123,7 +123,8 @@ impl Feed {
     }
 
     fn alphabetically(&mut self) {
-        self.standard_products.sort_by_key(|p| p.human_name.clone());
+        self.standard_products
+            .sort_by_key(|p| p.human_name.to_lowercase());
     }
 
     fn images(&self) -> Vec<&str> {
@@ -134,30 +135,40 @@ impl Feed {
     }
 }
 
-pub struct TroveFeed {
-    cache: Cache,
-    json: String,
-    feed: Feed,
+trait TroveCache {
+    fn chunk_url(&self, i: usize) -> String;
+    fn trove_url(&self) -> &'static str;
+    fn feed_doc(&self) -> Result<Value, Error>;
+    fn chunks(&self, root: &Value) -> usize;
+    fn get_trove_feed(&self) -> Result<Value, Error>;
+    fn invalidate(&self) -> Result<(), Error>;
 }
 
-fn chunk_url(i: usize) -> String {
-    format!(
-        "https://www.humblebundle.com/api/v1/trove/chunk?index={}",
-        i
-    )
-}
+impl TroveCache for Cache {
+    fn chunk_url(&self, i: usize) -> String {
+        format!(
+            "https://www.humblebundle.com/api/v1/trove/chunk?index={}",
+            i
+        )
+    }
 
-impl TroveFeed {
-    fn retrieve(cache: &Cache) -> Result<Value, Error> {
-        const TROVE_URL: &str = "https://www.humblebundle.com/monthly/trove";
-        let text = cache.retrieve(&TROVE_URL)?;
+    fn trove_url(&self) -> &'static str {
+        "https://www.humblebundle.com/monthly/trove"
+    }
+
+    fn feed_doc(&self) -> Result<Value, Error> {
+        let text = self.retrieve(self.trove_url())?;
         let doc = Document::from(str::from_utf8(&text)?);
         let data = doc
             .find(Attr("id", "webpack-monthly-trove-data"))
             .next()
             .unwrap()
             .text();
-        let mut root: Value = serde_json::from_str(data.as_str())?;
+        let root: Value = serde_json::from_str(data.as_str())?;
+        Ok(root)
+    }
+
+    fn chunks(&self, root: &Value) -> usize {
         debug!("Extracting number of chunks");
         let chunks: usize = match &root["chunks"] {
             Value::Number(number) => {
@@ -165,23 +176,12 @@ impl TroveFeed {
             }
             _ => panic!("Unable to get chunks value!"),
         };
-        let expiration = match &root["countdownTimerOptions"]["nextAdditionTime"] {
-            Value::String(string) => {
-                NaiveDateTime::parse_from_str(string.as_str(), "%Y-%m-%dT%H:%M:%S%.f")
-                    .expect("Error parsing nextAdditionTime")
-            }
-            _ => panic!("Unable to get nextAdditionTime!"),
-        };
-        debug!("Expiration: {}", expiration);
-        if Utc::now().timestamp() > expiration.timestamp() {
-            println!("Resetting cache.");
-            info!("Resetting cache.");
-            cache.invalidate(TROVE_URL)?;
-            for i in 0..chunks {
-                cache.invalidate(chunk_url(i).as_str())?;
-            }
-            return TroveFeed::retrieve(cache);
-        }
+        chunks
+    }
+
+    fn get_trove_feed(&self) -> Result<Value, Error> {
+        let mut root = self.feed_doc()?;
+        let chunks = self.chunks(&root);
         debug!("Getting product list");
         let products = match root
             .get_mut("standardProducts")
@@ -191,15 +191,36 @@ impl TroveFeed {
             _ => panic!("Unexpected value in standard_products field"),
         };
         for i in 0..chunks {
-            let bytes = cache.retrieve(chunk_url(i).as_str())?;
+            let bytes = self.retrieve(self.chunk_url(i).as_str())?;
             let chunk: Vec<Value> = serde_json::from_str(str::from_utf8(&bytes)?)?;
             products.extend(chunk);
         }
         Ok(root)
     }
 
-    pub fn new(cache: Cache) -> Result<TroveFeed, Error> {
-        let root: Value = TroveFeed::retrieve(&cache)?;
+    fn invalidate(&self) -> Result<(), Error> {
+        // This is a bit weird. We retrieve the cached value only to determine
+        // how many chunk urls we need to invalidate. This is needed because we
+        // do not save the extracted chunk value in our exports.
+        let root = self.feed_doc()?;
+        let chunks = self.chunks(&root);
+        self.invalidate(self.trove_url())?;
+        for i in 0..chunks {
+            self.invalidate(self.chunk_url(i).as_str())?;
+        }
+        Ok(())
+    }
+}
+
+pub struct TroveFeed {
+    cache: Cache,
+    json: String,
+    feed: Feed,
+}
+
+impl TroveFeed {
+    pub fn new(cache: Cache, dir: &PathBuf) -> Result<TroveFeed, Error> {
+        let root = cache.get_trove_feed()?;
         let json = serde_json::to_string_pretty(&root)?;
         let mut trove_feed = TroveFeed {
             cache,
@@ -215,7 +236,22 @@ impl TroveFeed {
             }
             return false;
         });
+        trove_feed.save(&dir.join("trove.json"))?;
+        trove_feed.backup(dir)?;
         Ok(trove_feed)
+    }
+
+    pub fn expired(&self) -> bool {
+        let expiration = NaiveDateTime::parse_from_str(
+            &self.feed.countdown_timer_options.next_addition_time,
+            "%Y-%m-%dT%H:%M:%S%.f",
+        )
+        .expect("Error parsing nextAdditionTime");
+        debug!("Expiration: {}", expiration);
+        if Utc::now().timestamp() > expiration.timestamp() {
+            return true;
+        }
+        return false;
     }
 
     pub fn cache_images(&self) {
@@ -273,7 +309,10 @@ impl TroveFeed {
         Ok(())
     }
 
-    pub fn backup(&self, _dir: &PathBuf) -> Result<(), Error> {
+    pub fn backup(&self, dir: &PathBuf) -> Result<(), Error> {
+        let filename = Utc::now().format("trove-%Y-%m-%d.json").to_string();
+        info!("Creating backup: {}.", &filename);
+        self.save(&dir.join(filename))?;
         Ok(())
     }
 
@@ -303,5 +342,13 @@ impl TroveFeed {
 
     pub fn products(&self) -> &Vec<Product> {
         &self.feed.standard_products
+    }
+
+    pub fn sort_newest_to_oldest(&mut self) {
+        self.feed.newest_to_oldest();
+    }
+
+    pub fn sort_alphabetically(&mut self) {
+        self.feed.alphabetically();
     }
 }

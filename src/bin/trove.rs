@@ -43,6 +43,11 @@ fn run() -> Result<(), Error> {
                 .help("List the titles in the trove"),
         )
         .arg(
+            Arg::with_name("newest")
+                .long("newest")
+                .help("Sort list newest to oldest"),
+        )
+        .arg(
             Arg::with_name("diff")
                 .long("diff")
                 .takes_value(true)
@@ -76,15 +81,21 @@ fn run() -> Result<(), Error> {
         fs::create_dir_all(&cache_dir)?;
     }
     let cache = Cache::new(cache_dir);
-    let feed = if !trove_json.exists() || matches.is_present("update") {
-        TroveFeed::new(cache)?
+    let mut feed = if !trove_json.exists() || matches.is_present("update") {
+        TroveFeed::new(cache, &trove_dir)?
     } else {
         TroveFeed::load(cache, &trove_json)?
     };
+    if feed.expired() {
+        eprintln!("Warning: Feed is expired. Run --update to correct.");
+    }
     if matches.is_present("list") {
+        if matches.is_present("newest") {
+            feed.sort_newest_to_oldest();
+        }
         feed.products()
             .iter()
-            .for_each(|p| println!("{}", p.machine_name));
+            .for_each(|p| println!("{}", p.human_name));
     }
     if matches.is_present("cache-images") {
         feed.cache_images();
@@ -96,7 +107,6 @@ fn run() -> Result<(), Error> {
         println!("Diffing");
         feed.diff(old);
     }
-    //feed.save(&trove_dir.join("trove.json"))?;
     Ok(())
 }
 
