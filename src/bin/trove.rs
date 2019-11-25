@@ -1,119 +1,64 @@
-/*
-trove_feed
-Phase 1: Preservation
-Download Trove feed as json (name with date, copy to trove.json)
-Allow comparison with previous copies (by filename)
-Keep backups of previous feeds
-Download all images
-
-trove
-Phase 2: Downloads
-Create processed trove database
-Merge in data from newer feeds
-Look for items still in Downloads folder
-Move to trove
-Separate installers from installed Trove games
-Detect whether download needs to be installed or not
-Detect which games are installed
-Launch installers
-Launch games
-
-doorways
-Phase 3: Doorways
-Integrate with Doorways launcher
-*/
 extern crate trove;
 
 use clap::{App, Arg};
-use dirs;
-use env_logger;
 use failure::Error;
-use std::fs;
 use std::path::PathBuf;
 use std::process::exit;
-use trove::{cache::Cache, trove_feed::TroveFeed};
+use trove::{Cache, Trove, TroveFeed};
 
 fn run() -> Result<(), Error> {
-    env_logger::init();
     let matches = App::new("trove")
-        .about("A utility to manage Humble Bundle Trove titles")
+        .about("Utility to manage games from the Humble Bundle Trove")
         .arg(
             Arg::with_name("list")
                 .long("list")
-                .help("List the titles in the trove"),
+                .help("List the games in the trove"),
         )
         .arg(
-            Arg::with_name("newest")
-                .long("newest")
-                .help("Sort list newest to oldest"),
-        )
-        .arg(
-            Arg::with_name("diff")
-                .long("diff")
+            Arg::with_name("downloads")
+                .long("downloads")
                 .takes_value(true)
-                .help("Diff the titles in the current set with the ones in the specified backup"),
+                .help("Directory to use to look for downloads"),
         )
         .arg(
-            Arg::with_name("new")
-                .long("new")
-                .help("Display the newly added titles"),
-        )
-        .arg(
-            Arg::with_name("update")
-                .long("update")
-                .help("Update trove.json"),
-        )
-        .arg(
-            Arg::with_name("cache-images")
-                .long("cache-images")
-                .help("Cache the images referenced in the Trove feed"),
+            Arg::with_name("root")
+                .long("root")
+                .takes_value(true)
+                .help("Directory to use as the root of the local Trove cache"),
         )
         .get_matches();
-    let trove_dir: PathBuf = dirs::home_dir()
+    let trove_dir = dirs::home_dir()
         .expect("Unable to find home directory!")
         .join(".trove");
-    let trove_json = trove_dir.join("trove.json");
-    if !trove_dir.exists() {
-        fs::create_dir_all(&trove_dir)?;
-    }
-    let cache_dir = &trove_dir.join("cache");
-    if !cache_dir.exists() {
-        fs::create_dir_all(&cache_dir)?;
-    }
-    let cache = Cache::new(cache_dir);
-    let mut feed = if !trove_json.exists() || matches.is_present("update") {
-        TroveFeed::new(cache, &trove_dir)?
+    let trove_games_json = trove_dir.join("trove_games.json");
+    let games = if trove_games_json.exists() {
+        Trove::load(&trove_games_json)?
     } else {
-        TroveFeed::load(cache, &trove_json)?
-    };
-    if feed.expired() {
-        eprintln!("Warning: Feed is expired. Run --update to correct.");
-    }
-    if matches.is_present("list") {
-        if matches.is_present("newest") {
-            feed.sort_newest_to_oldest();
+        if !matches.is_present("downloads") || !matches.is_present("root") {
+            eprintln!("Must pass in both --downloads and --root when creating the cache.");
+            exit(1);
         }
-        feed.products()
-            .iter()
-            .for_each(|p| println!("{}", p.human_name));
+        let downloads: PathBuf = matches.value_of("downloads").unwrap().into();
+        let root: PathBuf = matches.value_of("root").unwrap().into();
+        let mut trove = Trove::new(&root, &downloads)?;
+        let cache = Cache::new(trove_dir.join("cache"));
+        let trove_feed = TroveFeed::load(cache, &trove_dir.join("trove.json"))?;
+        trove.add_games(trove_feed);
+        trove
+    };
+    if matches.is_present("list") {
+        for game in &games.games {
+            println!("{}", game.human_name);
+        }
     }
-    if matches.is_present("cache-images") {
-        feed.cache_images();
-    }
-    if let Some(to_diff) = matches.value_of("diff") {
-        let cache = Cache::new(cache_dir);
-        println!("Loading old version.");
-        let old = TroveFeed::load(cache, &to_diff.into())?;
-        println!("Diffing");
-        feed.diff(old);
-    }
+    println!("Game count: {}", games.games.len());
     Ok(())
 }
 
 fn main() {
     match run() {
         Err(err) => {
-            eprintln!("Error: {}", err);
+            eprintln!("{}", err);
             exit(1);
         }
         Ok(_) => (),
