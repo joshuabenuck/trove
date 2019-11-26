@@ -1,12 +1,15 @@
 extern crate trove;
 
 use clap::{App, Arg};
+use env_logger;
 use failure::Error;
+use log::trace;
 use std::path::PathBuf;
 use std::process::exit;
 use trove::{Cache, Trove, TroveFeed};
 
 fn run() -> Result<(), Error> {
+    env_logger::init();
     let matches = App::new("trove")
         .about("Utility to manage games from the Humble Bundle Trove")
         .arg(
@@ -47,9 +50,25 @@ fn run() -> Result<(), Error> {
     let trove_dir = dirs::home_dir()
         .expect("Unable to find home directory!")
         .join(".trove");
-    let trove_games_json = trove_dir.join("trove_games.json");
+    let trove_games_json = trove_dir.join("trove.json");
     let mut trove = if trove_games_json.exists() {
-        Trove::load(&trove_games_json)?
+        trace!("{} exists; loading.", &trove_games_json.display());
+        let mut trove = Trove::load(&trove_dir)?;
+        // TODO: add trove.expired()
+        if matches.is_present("update") {
+            trace!("Updating trove.json using trove_feed.json.");
+            let cache = Cache::new(trove_dir.join("cache"));
+            let mut trove_feed = TroveFeed::load(cache, &trove_dir.join("trove_feed.json"))?;
+            let expired = trove_feed.expired();
+            // Add these to the library before getting the next version of the feed.
+            trove.add_games(trove_feed);
+            if expired {
+                let cache = Cache::new(trove_dir.join("cache"));
+                trove_feed = TroveFeed::new(cache, &trove_dir)?;
+                trove.add_games(trove_feed);
+            }
+        }
+        trove
     } else {
         if !matches.is_present("downloads") || !matches.is_present("root") {
             eprintln!("Must pass in both --downloads and --root when creating the cache.");
@@ -59,8 +78,9 @@ fn run() -> Result<(), Error> {
         let root: PathBuf = matches.value_of("root").unwrap().into();
         let mut trove = Trove::new(&root, &downloads)?;
         let cache = Cache::new(trove_dir.join("cache"));
-        let trove_feed = TroveFeed::load(cache, &trove_dir.join("trove.json"))?;
+        let trove_feed = TroveFeed::load(cache, &trove_dir.join("trove_feed.json"))?;
         trove.add_games(trove_feed);
+        trove.save(&trove_games_json)?;
         trove
     };
     if matches.is_present("stray-downloads") {

@@ -68,6 +68,21 @@ impl From<&Product> for TroveGame {
     }
 }
 
+trait VecTroveGame {
+    fn find_mut(&mut self, other: &TroveGame) -> Option<&mut TroveGame>;
+}
+
+impl VecTroveGame for Vec<TroveGame> {
+    fn find_mut(&mut self, other: &TroveGame) -> Option<&mut TroveGame> {
+        for game in self.into_iter() {
+            if game.human_name == other.human_name {
+                return Some(game);
+            }
+        }
+        return None;
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct Trove {
     pub downloads: PathBuf,
@@ -82,7 +97,9 @@ pub struct Trove {
 
 impl Trove {
     pub fn load(dir: &PathBuf) -> Result<Trove, Error> {
-        let file = fs::File::open(dir.join("trove_games.json"))?;
+        let trove_json = dir.join("trove.json");
+        let file = fs::File::open(&trove_json)
+            .expect(&format!("Unable to load {}.", &trove_json.display()));
         let trove: Trove = serde_json::from_reader(file)?;
         Ok(trove)
     }
@@ -108,7 +125,26 @@ impl Trove {
 
     pub fn add_games(&mut self, feed: TroveFeed) {
         for product in feed.products() {
-            self.games.push(product.into());
+            let game: TroveGame = product.into();
+            let entry = self.games.find_mut(&game);
+            match entry {
+                Some(existing) => {
+                    existing.machine_name = game.machine_name;
+                    existing.human_name = game.human_name;
+                    existing.description = game.description;
+                    existing.date_added = game.date_added;
+                    existing.executable = game.executable;
+                    existing.download_urls = game.download_urls;
+                    existing.downloads = game.downloads;
+                    existing.logo = game.logo;
+                    existing.image = game.image;
+                    existing.screenshots = game.screenshots;
+                    existing.thumbnails = game.thumbnails;
+                    existing.trailer = game.trailer;
+                    // computed: downloaded, installed, last_seen_on, removed_from_trove
+                }
+                None => self.games.push(game),
+            }
         }
     }
 
@@ -240,5 +276,11 @@ impl Trove {
             })
             .cloned()
             .collect()
+    }
+
+    pub fn save(&self, path: &PathBuf) -> Result<(), Error> {
+        let file = fs::File::create(path)?;
+        serde_json::to_writer_pretty(file, self)?;
+        Ok(())
     }
 }

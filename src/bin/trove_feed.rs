@@ -61,7 +61,7 @@ fn run() -> Result<(), Error> {
         .arg(
             Arg::with_name("update")
                 .long("update")
-                .help("Update trove.json"),
+                .help("Update trove_feed.json"),
         )
         .arg(
             Arg::with_name("cache-images")
@@ -72,7 +72,7 @@ fn run() -> Result<(), Error> {
     let trove_dir: PathBuf = dirs::home_dir()
         .expect("Unable to find home directory!")
         .join(".trove");
-    let trove_json = trove_dir.join("trove.json");
+    let trove_json = trove_dir.join("trove_feed.json");
     if !trove_dir.exists() {
         fs::create_dir_all(&trove_dir)?;
     }

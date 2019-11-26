@@ -236,7 +236,7 @@ impl TroveFeed {
             }
             return false;
         });
-        trove_feed.save(&dir.join("trove.json"))?;
+        trove_feed.save(&dir.join("trove_feed.json"))?;
         trove_feed.backup(dir)?;
         Ok(trove_feed)
     }
@@ -310,7 +310,7 @@ impl TroveFeed {
     }
 
     pub fn backup(&self, dir: &PathBuf) -> Result<(), Error> {
-        let filename = Utc::now().format("trove-%Y-%m-%d.json").to_string();
+        let filename = Utc::now().format("trove_feed-%Y-%m-%d.json").to_string();
         info!("Creating backup: {}.", &filename);
         self.save(&dir.join(filename))?;
         Ok(())
