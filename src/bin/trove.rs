@@ -15,6 +15,16 @@ fn run() -> Result<(), Error> {
                 .help("List the games in the trove"),
         )
         .arg(
+            Arg::with_name("stray-downloads")
+                .long("stray-downloads")
+                .help("Show all trove downloads still in the download directory"),
+        )
+        .arg(
+            Arg::with_name("move-downloads")
+                .long("move-downloads")
+                .help("Move all stray downloads to the trove"),
+        )
+        .arg(
             Arg::with_name("downloads")
                 .long("downloads")
                 .takes_value(true)
@@ -26,12 +36,19 @@ fn run() -> Result<(), Error> {
                 .takes_value(true)
                 .help("Directory to use as the root of the local Trove cache"),
         )
+        .arg(
+            Arg::with_name("downloaded")
+                .long("downloaded")
+                .takes_value(true)
+                .default_value("true")
+                .help("Filter games by whether they are downloaded"),
+        )
         .get_matches();
     let trove_dir = dirs::home_dir()
         .expect("Unable to find home directory!")
         .join(".trove");
     let trove_games_json = trove_dir.join("trove_games.json");
-    let games = if trove_games_json.exists() {
+    let mut trove = if trove_games_json.exists() {
         Trove::load(&trove_games_json)?
     } else {
         if !matches.is_present("downloads") || !matches.is_present("root") {
@@ -46,12 +63,30 @@ fn run() -> Result<(), Error> {
         trove.add_games(trove_feed);
         trove
     };
+    if matches.is_present("stray-downloads") {
+        for download in trove.stray_downloads() {
+            println!("{}", download.display());
+        }
+    }
+    if matches.is_present("move-downloads") {
+        trove.move_downloads();
+    }
+    trove.update_download_status();
+    let mut games = trove.games.iter().map(|g| g).collect();
+    if matches.is_present("downloaded") {
+        let downloaded = matches.value_of("downloaded").unwrap().parse::<bool>()?;
+        if downloaded {
+            games = trove.downloaded();
+        } else {
+            games = trove.not_downloaded();
+        }
+    }
     if matches.is_present("list") {
-        for game in &games.games {
+        for game in &games {
             println!("{}", game.human_name);
         }
     }
-    println!("Game count: {}", games.games.len());
+    println!("Game count: {}", games.len());
     Ok(())
 }
 
