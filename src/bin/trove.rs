@@ -8,6 +8,15 @@ use std::path::PathBuf;
 use std::process::exit;
 use trove::{Cache, Trove, TroveFeed};
 
+/*
+Find all backup files
+loop from oldest to newest
+  load file
+  add to Trove
+load current
+add it to Trove
+*/
+
 fn run() -> Result<(), Error> {
     env_logger::init();
     let matches = App::new("trove")

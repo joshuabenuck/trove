@@ -1,17 +1,18 @@
 /*
 trove_feed
 Phase 1: Preservation
-Download Trove feed as json (name with date, copy to trove.json)
-Allow comparison with previous copies (by filename)
-Keep backups of previous feeds
+X Download Trove feed as json (name with date, copy to trove.json)
+X Allow comparison with previous copies (by filename)
+X Keep backups of previous feeds
 Download all images
 
 trove
 Phase 2: Downloads
-Create processed trove database
+X Create processed trove database
 Merge in data from newer feeds
-Look for items still in Downloads folder
-Move to trove
+X Detect which games are downloaded
+X Look for items still in Downloads folder
+X Move to trove
 Separate installers from installed Trove games
 Detect whether download needs to be installed or not
 Detect which games are installed

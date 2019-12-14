@@ -227,8 +227,13 @@ impl TroveFeed {
             json,
             feed: serde_json::from_value(root)?,
         };
-        trove_feed.feed.alphabetically();
+        if trove_feed.expired() {
+            eprintln!("Refreshing expired cache.");
+            TroveCache::invalidate(&trove_feed.cache)?;
+            return TroveFeed::new(trove_feed.cache, dir);
+        }
         let mut products: Vec<String> = Vec::new();
+        // Dedup the list
         trove_feed.feed.standard_products.retain(|p| {
             if !products.contains(&p.machine_name) {
                 products.push(p.machine_name.clone());
@@ -236,6 +241,15 @@ impl TroveFeed {
             }
             return false;
         });
+        let newly_added = &trove_feed.feed.newly_added;
+        let standard_products = &mut trove_feed.feed.standard_products;
+        newly_added.iter().for_each(|p| {
+            if !products.contains(&p.machine_name) {
+                products.push(p.machine_name.clone());
+                standard_products.push(p.clone());
+            }
+        });
+        trove_feed.feed.alphabetically();
         trove_feed.save(&dir.join("trove_feed.json"))?;
         trove_feed.backup(dir)?;
         Ok(trove_feed)
@@ -298,6 +312,14 @@ impl TroveFeed {
                 return true;
             }
             return false;
+        });
+        let newly_added = &feed.newly_added;
+        let standard_products = &mut feed.standard_products;
+        newly_added.iter().for_each(|p| {
+            if !products.contains(&p.machine_name) {
+                products.push(p.machine_name.clone());
+                standard_products.push(p.clone());
+            }
         });
         feed.alphabetically();
         Ok(TroveFeed { cache, json, feed })
