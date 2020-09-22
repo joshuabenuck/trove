@@ -16,7 +16,9 @@ use std::str;
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TimerOptions {
+    #[serde(rename = "currentTime|datetime")]
     pub current_time: String,
+    #[serde(rename = "nextAdditionTime|datetime")]
     pub next_addition_time: String,
 }
 
@@ -109,7 +111,7 @@ pub struct Feed {
     pub all_access: Vec<String>,
     pub download_platform_order: Vec<String>,
     pub newly_added: Vec<Product>,
-    pub display_item_data: Value,
+    // pub display_item_data: Value,
     pub countdown_timer_options: TimerOptions,
     pub standard_products: Vec<Product>,
     //pub chunks: u8,
@@ -147,13 +149,13 @@ trait TroveCache {
 impl TroveCache for Cache {
     fn chunk_url(&self, i: usize) -> String {
         format!(
-            "https://www.humblebundle.com/api/v1/trove/chunk?index={}",
+            "https://www.humblebundle.com/api/v1/trove/chunk?property=start&direction=desc&index={}",
             i
         )
     }
 
     fn trove_url(&self) -> &'static str {
-        "https://www.humblebundle.com/monthly/trove"
+        "https://www.humblebundle.com/subscription/trove"
     }
 
     fn feed_doc(&self) -> Result<Value, Error> {
@@ -183,18 +185,22 @@ impl TroveCache for Cache {
         let mut root = self.feed_doc()?;
         let chunks = self.chunks(&root);
         debug!("Getting product list");
-        let products = match root
-            .get_mut("standardProducts")
-            .expect("Unable to get product list")
-        {
-            Value::Array(array) => array,
-            _ => panic!("Unexpected value in standard_products field"),
-        };
+        let mut products = Vec::new();
+        // match root
+        //     .get_mut("standardProducts")
+        //     .expect("Unable to get product list")
+        // {
+        //     Value::Array(array) => array,
+        //     _ => panic!("Unexpected value in standard_products field"),
+        // };
         for i in 0..chunks {
             let bytes = self.retrieve(self.chunk_url(i).as_str())?;
             let chunk: Vec<Value> = serde_json::from_str(str::from_utf8(&bytes)?)?;
             products.extend(chunk);
         }
+        root.as_object_mut()
+            .expect("Unable to get root")
+            .insert("standardProducts".to_string(), Value::Array(products));
         Ok(root)
     }
 
